@@ -37,3 +37,36 @@ build/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# More credentials and exports
+*.crt
+*.jks
+id_rsa*
+id_ed25519*
+*.bak
+*.dump
+*.sqlite-*
+
+# Release archives and exported images
+artifacts/
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+
+# User media. Atlas source contains none, and documentation screenshots are PNG
+originals/
+uploads/
+media/
+renditions/
+*.jpg
+*.jpeg
+*.heic
+*.heif
+*.mp4
+*.mov
+*.webm
+
+# Browser test output
+test-results/
+playwright-report/
