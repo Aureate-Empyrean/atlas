@@ -1,0 +1,73 @@
+{
+  "protocol": 1,
+  "id": "atlas",
+  "name": "Atlas",
+  "description": "Your personal geographic layer: the places that matter to you, on a map and in a library, linked with the rest of your Empyrean data.",
+  "version": "0.3.0",
+  "publisher": {
+    "name": "Aureate Empyrean",
+    "originalAuthors": [
+      "Aureate Empyrean contributors"
+    ]
+  },
+  "repository": "https://github.com/Aureate-Empyrean/atlas",
+  "license": "AGPL-3.0-or-later",
+  "nexus": ">=0.1.8,<0.2.0",
+  "container": {
+    "image": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "port": 19333
+  },
+  "capabilities": [
+    "ui.application",
+    "storage.data",
+    "references.read",
+    "references.resolve",
+    "projections.read",
+    "network.egress"
+  ],
+  "routes": {
+    "ui": "/",
+    "api": "/api",
+    "health": "/health"
+  },
+  "icon": "/icon.svg",
+  "events": {
+    "produces": [],
+    "consumes": []
+  },
+  "resources": [
+    {
+      "type": "place",
+      "resolvable": true
+    }
+  ],
+  "references": {
+    "version": 2,
+    "read": [],
+    "resolve": [
+      {
+        "module": "chronos",
+        "type": "event"
+      },
+      {
+        "module": "meridian",
+        "type": "interaction"
+      }
+    ]
+  },
+  "projections": {
+    "version": 1,
+    "provides": [
+      "place-directory"
+    ],
+    "read": [
+      {
+        "module": "meridian",
+        "projection": "contact-addresses"
+      }
+    ]
+  },
+  "backup": {
+    "version": 1
+  }
+}

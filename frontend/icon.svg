@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <title>Atlas</title>
+  <defs>
+    <!-- CSS 145deg: direction (sin(145deg), -cos(145deg)) on a square tile. -->
+    <linearGradient id="sapphire" gradientUnits="userSpaceOnUse" x1="4.8279" y1="-3.3805" x2="43.1721" y2="51.3805">
+      <stop offset="0" stop-color="#A5D8FF"/>
+      <stop offset=".48" stop-color="#4285D4"/>
+      <stop offset="1" stop-color="#194F91"/>
+    </linearGradient>
+  </defs>
+  <rect width="48" height="48" fill="url(#sapphire)"/>
+  <g transform="translate(6 6) scale(1.8)" fill="none" stroke="#101A2A" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="10" cy="10" r="7.4"/>
+    <ellipse cx="10" cy="10" rx="3.3" ry="7.4"/>
+    <path d="M2.9 7.6h14.200M2.9 12.4h14.200"/>
+  </g>
+</svg>
