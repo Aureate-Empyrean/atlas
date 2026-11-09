@@ -111,7 +111,7 @@ function confirmDialog(title, text, label) {
 const state = {
   view: "map", places: [], counts: { active: 0, trashed: 0 }, categories: [], tags: [], apps: [],
   selected: null, selectedGroup: null, picking: null, mapSettings: null, searchResults: null,
-  filter: { q: "", view: "all", category: "" },
+  filter: { q: "", view: "all", category: "", source: "all", sort: "name" },
   filters: { places: true, contacts: true, hidden_categories: [], favorite: true, want: true, inactive: true, plain: true, current_addresses: true, former_addresses: false },
   contacts: { availability: "loading", items: [], geocoding: false, online: false, pending: 0, working: false },
   layersOpen: innerWidth > 760,
@@ -153,7 +153,7 @@ async function loadContacts() {
     renderLayers();
     draw();
   }
-  if (state.view === "library" && state.filter.category === MERIDIAN_ID()) loadLibrary().catch(() => {});
+  if (state.view === "library" && $("#place-list")) loadLibrary().catch(() => {});
   if ($("#contacts-panel")) renderContactsPanel();
   if (state.selectedGroup) refreshContactDetail();
   const busy = state.contacts.working || (state.contacts.pending && state.contacts.geocoding && state.contacts.online);
@@ -307,7 +307,7 @@ function renderLayers() {
   const located = state.places.filter(hasLocation);
   const c = state.contacts;
   const shown = c.items.filter((x) => x.latitude !== null).length;
-  const waiting = c.items.filter((x) => x.latitude === null).length;
+  const waiting = c.items.filter((x) => x.latitude === null && x.status !== "no_location").length;
   const meridian = categoryById(MERIDIAN_ID());
   let note = "";
   if (c.availability === "loading") note = `<p class="layer-note">Asking Meridian…</p>`;
@@ -625,6 +625,7 @@ function viewSettings(sheet) {
       <p class="meta">Only the map area being viewed and the words you search for are sent to these services. Your places, contacts and notes are never sent. Without the network, areas you have already viewed remain available.</p>
       <div class="ae-field"><label class="ae-label" for="st-tiles">Map images</label><input class="ae-input" id="st-tiles" value="${esc(s.tile_url)}" maxlength="500"></div>
       <div class="ae-field"><label class="ae-label" for="st-geo">Place search</label><input class="ae-input" id="st-geo" value="${esc(s.geocoder_url)}" maxlength="500"></div>
+      <div class="ae-field"><label class="ae-label" for="st-suggest">Address suggestions for Meridian</label><input class="ae-input" id="st-suggest" value="${esc(s.suggest_url)}" maxlength="500"><p class="ae-hint">Used only when address search is turned on in Meridian. A Photon-compatible service.</p></div>
       <p class="meta">You can point these at your own servers. ${(size / 1048576).toFixed(1)} MB of map images are stored for offline use.</p>
       <p class="form-error" id="st-error" role="alert" hidden></p><button class="ae-btn ae-btn--primary" data-act="save-settings">Save</button></section>
     <section class="settings-block"><label class="check"><input type="checkbox" id="st-geocoding" ${state.contacts.geocoding ? "checked" : ""}><span>Find locations for Meridian addresses</span></label>
@@ -637,26 +638,31 @@ function viewSettings(sheet) {
 
 /* ── Library ── */
 const FILTERS = [["all", "All"], ["favorites", "Favorites"], ["want", "Want to visit"], ["inactive", "Historical"]];
+const foldText = (s) => String(s || "").normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+const SOURCES = [["all", "Everything"], ["places", "Your places"], ["contacts", "Meridian addresses"]];
 async function loadLibrary() {
   const f = state.filter;
   const box = $("#place-list");
-  if (f.category && f.category === MERIDIAN_ID()) {
-    const words = f.q.toLowerCase().split(/\s+/).filter(Boolean);
-    const items = state.contacts.items.filter((c) => words.every((w) => `${c.name} ${c.text}`.toLowerCase().includes(w)));
-    if (!box) return;
-    $("#library-meta").textContent = `${items.length} ${items.length === 1 ? "address" : "addresses"} from Meridian`;
-    box.innerHTML = state.contacts.availability !== "available"
-      ? `<div class="empty"><h3>Not available right now</h3><p>${esc(contactNote(state.contacts.availability))}</p></div>`
-      : items.length ? items.map(contactCard).join("") : `<div class="empty"><h3>Nothing matches</h3><p>Addresses you add in Meridian appear here by themselves.</p></div>`;
-    return;
-  }
+  const meridian = f.category && f.category === MERIDIAN_ID();
+  const wantPlaces = f.source !== "contacts" && !meridian;
+  // Favorites, Want to visit and Historical describe your own places; contacts have no such state.
+  const wantContacts = f.source !== "places" && f.view === "all" && (!f.category || meridian);
   const params = new URLSearchParams({ q: f.q, view_name: f.view, category: f.category });
-  const { items } = await api("/places?" + params);
+  const places = wantPlaces ? (await api("/places?" + params)).items : [];
   if (!box) return;
-  $("#library-meta").textContent = `${items.length} ${items.length === 1 ? "place" : "places"}`;
-  box.innerHTML = items.length
-    ? items.map(placeCard).join("")
-    : `<div class="empty"><h3>${f.q || f.view !== "all" || f.category ? "Nothing matches" : "No places yet"}</h3><p>${f.q || f.view !== "all" || f.category ? "Try another search or filter." : "Add a place by name, and give it a location whenever you know it."}</p></div>`;
+  const words = foldText(f.q).split(/\s+/).filter(Boolean);
+  const contacts = wantContacts && state.contacts.availability === "available" ? state.contacts.items.filter((c) => words.every((w) => foldText(`${c.name} ${c.text} ${c.address_label}`).includes(w))) : [];
+  const rows = [...places.map((p) => ({ name: p.name, source: 0, html: placeCard(p) })), ...contacts.map((c) => ({ name: c.name, source: 1, html: contactCard(c) }))];
+  const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+  rows.sort(f.sort === "source" ? (a, b) => a.source - b.source || byName(a, b) : byName);
+  const counts = [places.length && `${places.length} ${places.length === 1 ? "place" : "places"}`, contacts.length && `${contacts.length} ${contacts.length === 1 ? "address" : "addresses"} from Meridian`].filter(Boolean);
+  $("#library-meta").textContent = counts.join(" · ") || "Nothing to show";
+  const availability = state.contacts.availability;
+  const notice = !wantContacts ? (f.source !== "places" && f.view !== "all" ? `<p class="meta library-note">${FILTERS.find(([k]) => k === f.view)[1]} applies to your own places, so Meridian addresses are hidden here.</p>` : "")
+    : availability === "loading" ? `<p class="meta library-note">Loading addresses from Meridian…</p>`
+    : availability !== "available" ? `<div class="notice library-note" role="status">Meridian addresses are not shown right now. ${esc(contactNote(availability))}</div>` : "";
+  const filtered = f.q || f.view !== "all" || f.category || f.source !== "all";
+  box.innerHTML = notice + (rows.length ? rows.map((r) => r.html).join("") : `<div class="empty"><h3>${filtered ? "Nothing matches" : "No places yet"}</h3><p>${filtered ? "Try another search or filter." : "Add a place by name, and give it a location whenever you know it. Addresses you add in Meridian appear here by themselves."}</p></div>`);
 }
 function placeCard(p) {
   const where = p.address || (hasLocation(p) ? coords(p) : "No location yet");
@@ -664,9 +670,10 @@ function placeCard(p) {
   return `<button class="place-card" data-place="${esc(p.id)}">${markerSvg(p.marker, 26)}<span class="grow"><span class="primary">${esc(p.name)}${p.inactive ? ' <span class="tag">Historical</span>' : ""}</span><span class="secondary">${esc(where)}</span>${facts ? `<span class="secondary">${esc(facts)}</span>` : ""}</span></button>`;
 }
 function contactCard(c) {
-  const facts = [cap(c.address_label), !c.current && "Former address", c.latitude === null && "No location yet"].filter(Boolean).join(" · ");
-  const open = c.latitude !== null ? `data-contact-pin="${esc(c.group)}"` : `data-act="contacts-panel"`;
-  return `<button class="place-card" ${open}>${markerSvg(c.marker, 26)}<span class="grow"><span class="primary">${esc(c.name)}</span><span class="secondary">${esc(c.text)}</span>${facts ? `<span class="secondary">${esc(facts)}</span>` : ""}</span></button>`;
+  const facts = [cap(c.address_label), c.primary && "Primary", !c.current && "Former address", c.status === "no_location" ? "Nothing to place on a map" : c.latitude === null && "No location yet"].filter(Boolean).join(" · ");
+  const canOpen = state.apps.some((a) => a.id === "meridian");
+  return `<div class="place-card is-static contact-entry" data-contact-entry="${esc(c.id)}">${markerSvg(c.marker, 26)}<span class="grow"><span class="primary">${esc(c.name)} <span class="tag source-tag">${icon("lock")} Meridian</span></span><span class="secondary">${esc(c.text)}</span>${facts ? `<span class="secondary">${esc(facts)}</span>` : ""}
+    <span class="detail-actions">${canOpen ? `<button class="ae-btn ae-btn--sm" data-module="meridian" data-path="${esc(c.open_path)}">${icon("external")}<span>Open in Meridian</span></button>` : ""}${c.latitude !== null ? `<button class="ae-btn ae-btn--sm" data-contact-pin="${esc(c.group)}">${icon("map")}<span>Show on map</span></button>` : c.status === "no_location" ? "" : `<button class="ae-btn ae-btn--sm" data-act="contacts-panel">${icon("map")}<span>Locate</span></button>`}<button class="ae-btn ae-btn--sm ae-btn--quiet" data-act="contact-to-place" data-id="${esc(c.id)}">${icon("plus")}<span>Make a place</span></button></span></span></div>`;
 }
 function viewLibrary(sheet) {
   const f = state.filter;
@@ -674,10 +681,25 @@ function viewLibrary(sheet) {
       <button class="ae-btn ae-btn--primary" data-act="new-place">${icon("plus")}<span>Add place</span></button></header>
     <div class="library-tools">
       <label class="search">${icon("search")}<input class="ae-input" id="lib-q" type="search" placeholder="Search your places" aria-label="Search your places" value="${esc(f.q)}" maxlength="200"></label>
+      <div class="segments" role="group" aria-label="Source" id="lib-source">${SOURCES.map(([k, l]) => `<button class="segment" data-source="${k}" aria-pressed="${f.source === k}">${l}</button>`).join("")}</div>
       <div class="segments" role="group" aria-label="Show">${FILTERS.map(([k, l]) => `<button class="segment" data-filter="${k}" aria-pressed="${f.view === k}">${l}</button>`).join("")}</div>
       <div id="lib-category" class="lib-combo"></div>
+      <label class="lib-sort"><span class="ae-visually-hidden">Sort by</span><select class="ae-select" id="lib-sort"><option value="name" ${f.sort === "name" ? "selected" : ""}>Sort by name</option><option value="source" ${f.sort === "source" ? "selected" : ""}>Places first</option></select></label>
     </div>
     <div class="place-list" id="place-list"></div></div>`;
+  $("#lib-source").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-source]");
+    if (!b) return;
+    state.filter.source = b.dataset.source;
+    $$("#lib-source [data-source]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    atlasNavigation.viewChanged();
+    loadLibrary().catch((err) => toast(err.message, "danger"));
+  });
+  $("#lib-sort").addEventListener("change", (e) => {
+    state.filter.sort = e.target.value;
+    atlasNavigation.viewChanged();
+    loadLibrary().catch((err) => toast(err.message, "danger"));
+  });
   let timer;
   $("#lib-q").addEventListener("input", (e) => {
     clearTimeout(timer);
@@ -1047,7 +1069,7 @@ function renderContactsPanel() {
   const panel = $("#contacts-panel");
   if (!panel) return;
   const c = state.contacts;
-  const open = c.items.filter((x) => x.latitude === null);
+  const open = c.items.filter((x) => x.latitude === null && x.status !== "no_location");
   const reason = { pending: c.working ? "Looking for it…" : "Waiting to be located", ambiguous: "Several possible locations", not_found: "Not found" };
   const row = (x) => `<li class="attention-row" data-attention="${esc(x.id)}">${markerSvg(x.marker, 24)}<div class="grow"><p class="primary">${esc(x.name)}</p><p class="secondary">${esc(x.text)}</p><p class="secondary">${reason[x.status]}${x.current ? "" : " · Former address"}</p>
       ${(x.candidates || []).map((o, i) => `<button class="candidate" data-candidate="${esc(x.id)}" data-i="${i}">${icon("map")}<span>${esc(o.display)}</span></button>`).join("")}
@@ -1295,6 +1317,12 @@ document.addEventListener("click", async (event) => {
     }
     const act = el.dataset.act;
     if (act === "new-place") return openEditor();
+    if (act === "contact-to-place") {
+      const c = state.contacts.items.find((x) => x.id === el.dataset.id);
+      if (!c) return;
+      toast("This makes a separate place of your own. It will not follow later changes in Meridian.");
+      return openEditor({ name: c.name, address: c.text.replace(/\n/g, ", "), ...(c.latitude !== null ? { latitude: c.latitude, longitude: c.longitude } : {}) });
+    }
     if (act === "new-category") return openCategoryDialog(null, () => go("categories"));
     if (act === "contacts-panel") return openContactsPanel();
     if (act === "toggle-layers") {
@@ -1319,7 +1347,7 @@ document.addEventListener("click", async (event) => {
       const err = $("#st-error");
       err.hidden = true;
       try {
-        await api("/map-settings", "PUT", { online: $("#st-online").checked, tile_url: $("#st-tiles").value, geocoder_url: $("#st-geo").value });
+        await api("/map-settings", "PUT", { online: $("#st-online").checked, tile_url: $("#st-tiles").value, geocoder_url: $("#st-geo").value, suggest_url: $("#st-suggest").value });
         tiles.images.clear();
         tiles.failed.clear();
         await refresh();

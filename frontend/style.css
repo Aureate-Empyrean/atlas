@@ -1433,3 +1433,20 @@ body {
   flex: 1 1 220px;
   min-width: 0;
 }
+
+/* Library: places and Meridian addresses together. */
+.contact-entry .detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.source-tag {
+  vertical-align: middle;
+}
+.library-note {
+  margin: 0 0 10px;
+}
+.lib-sort .ae-select {
+  width: auto;
+}

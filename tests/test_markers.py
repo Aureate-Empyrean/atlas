@@ -361,7 +361,10 @@ def test_only_geography_reaches_the_provider(world, item, sent):
 
 def test_an_address_with_no_geography_is_not_eligible(world):
     world.meridian.items = [address(parts={}, text="c/o Someone")]
-    assert world.layer()[1] == {}
+    entry = world.layer()[1][A1]
+    # Listed in the Library, but never looked up and never on the map.
+    assert entry["status"] == "no_location" and entry["latitude"] is None and entry["group"] is None
+    assert world.provider.queries == []
 
 
 def test_contacts_at_one_address_share_a_group_and_one_lookup(world):

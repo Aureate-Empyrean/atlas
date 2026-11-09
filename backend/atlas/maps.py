@@ -21,8 +21,16 @@ from pathlib import Path
 
 DEFAULT_TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 DEFAULT_GEOCODER = "https://nominatim.openstreetmap.org"
+# Address suggestions as you type (ADR 0031). Nominatim's policy forbids that use; Photon is built
+# for it. Its public instance is a fair-use service, and it is self-hostable.
+DEFAULT_SUGGEST = "https://photon.komoot.io"
+SUGGEST_PROVIDER = "Photon"
+SUGGEST_INTERVAL = 0.4
+SUGGEST_CACHE_SECONDS = 600
+SUGGEST_CACHE_ENTRIES = 200
+NUMBER_FIRST = {"us", "ca", "gb", "ie", "au", "nz", "fr"}
 ATTRIBUTION = "© OpenStreetMap contributors"
-USER_AGENT = "AureateEmpyrean-Atlas/0.2 (+https://github.com/Aureate-Empyrean/atlas)"
+USER_AGENT = "AureateEmpyrean-Atlas/0.5 (+https://github.com/Aureate-Empyrean/atlas)"
 MIN_CACHE = 7 * 24 * 3600
 MAX_CACHE_BYTES = 256 * 1024 * 1024
 MAX_TILE_BYTES = 512 * 1024
@@ -41,13 +49,46 @@ class Offline(Exception):
     pass
 
 
-def _fetch(url, headers):
+class Busy(Exception):
+    pass
+
+
+def _fetch(url, headers, timeout=8):
     request = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(request, timeout=8) as r:
+        with urllib.request.urlopen(request, timeout=timeout) as r:
             return r.status, dict(r.headers), r.read(MAX_TILE_BYTES * 8)
     except urllib.error.HTTPError as exc:
         return exc.code, dict(exc.headers or {}), b""
+
+
+def parse_suggestion(feature):
+    """One provider result as address fields. A value the provider did not give stays empty."""
+    props = feature["properties"]
+    longitude, latitude = feature["geometry"]["coordinates"]
+    kind = str(props.get("type") or "")
+    code = str(props.get("countrycode") or "").lower()
+    name = str(props.get("name") or "")
+    number = str(props.get("housenumber") or "")
+    road = str(props.get("street") or (name if kind == "street" else ""))
+    street = (f"{number} {road}" if code in NUMBER_FIRST else f"{road} {number}").strip() if road else number
+    locality = str(props.get("city") or (name if kind in ("city", "town", "village", "locality") else ""))
+    fields = {
+        "street": street[:200],
+        "postal_code": str(props.get("postcode") or "")[:30],
+        "locality": locality[:120],
+        "region": str(props.get("state") or "")[:120],
+        "country": str(props.get("country") or "")[:120],
+    }
+    place = name if name and kind not in ("house", "street", "city", "town", "village", "locality") else ""
+    label = ", ".join(x for x in (place, street or locality or name) if x)
+    place_line = " ".join(x for x in (fields["postal_code"], locality) if x)
+    detail = ", ".join(x for x in (place_line, fields["region"], fields["country"]) if x)
+    return {
+        "kind": "suggestion", **fields, "label": label[:200], "detail": detail[:300],
+        "latitude": float(latitude), "longitude": float(longitude),
+        "precision": "house" if number else (kind or "area")[:20],
+    }  # fmt: skip
 
 
 class Maps:
@@ -56,6 +97,9 @@ class Maps:
         self.cache = Path(data) / "tiles"
         self.cache.mkdir(parents=True, exist_ok=True)
         self.fetch = fetch or _fetch
+        self.quick_fetch = fetch or (lambda url, headers: _fetch(url, headers, timeout=4))
+        self.last_suggest = [0.0]
+        self.suggestions = {}  # memory only: what was searched is never written down
         self.lock = threading.Lock()
         self.last_geocode = [0.0]
         self.writes = [0]
@@ -66,15 +110,21 @@ class Maps:
             "online": stored.get("online") == "1",
             "tile_url": stored.get("tile_url") or DEFAULT_TILES,
             "geocoder_url": stored.get("geocoder_url") or DEFAULT_GEOCODER,
+            "suggest_url": stored.get("suggest_url") or DEFAULT_SUGGEST,
             "attribution": ATTRIBUTION,
         }
 
-    def save(self, conn, online, tile_url, geocoder_url):
+    def save(self, conn, online, tile_url, geocoder_url, suggest_url=None):
         if not TILE_URL.fullmatch(tile_url) or not all(p in tile_url for p in ("{z}", "{x}", "{y}")):
             raise Invalid("The tile address must be http(s) and contain {z}, {x} and {y}.")
         if not URL.fullmatch(geocoder_url):
             raise Invalid("The search address must be http(s).")
-        for key, value in (("online", "1" if online else "0"), ("tile_url", tile_url), ("geocoder_url", geocoder_url.rstrip("/"))):
+        if suggest_url is not None and not URL.fullmatch(suggest_url):
+            raise Invalid("The address suggestion service must be http(s).")
+        values = [("online", "1" if online else "0"), ("tile_url", tile_url), ("geocoder_url", geocoder_url.rstrip("/"))]
+        if suggest_url is not None:  # left as it is when the caller does not name one
+            values.append(("suggest_url", suggest_url.rstrip("/")))
+        for key, value in values:
             conn.execute("INSERT OR REPLACE INTO settings(key, value) VALUES(?,?)", (key, value))
 
     def _paths(self, z, x, y):
@@ -138,6 +188,42 @@ class Maps:
 
     def cached_bytes(self):
         return sum(p.stat().st_size for p in self.cache.rglob("*.tile"))
+
+    def suggest(self, settings, q):
+        """Address suggestions as someone types. Only the words typed are sent. Rate limited here,
+        whatever the callers do; results are kept briefly in memory and never logged."""
+        if not settings["online"]:
+            raise Offline
+        key = " ".join(q.lower().split())
+        now = time.monotonic()
+        with self.lock:
+            hit = self.suggestions.get(key)
+            if hit and now - hit[0] < SUGGEST_CACHE_SECONDS:
+                return hit[1]
+            if now - self.last_suggest[0] < SUGGEST_INTERVAL:
+                raise Busy
+            self.last_suggest[0] = now
+        query = urllib.parse.urlencode({"q": q[:120], "limit": 6})
+        try:
+            status, _, body = self.quick_fetch(f"{settings['suggest_url']}/api?{query}", {"User-Agent": USER_AGENT})
+            if status == 429:
+                raise Busy
+            if status != 200:
+                raise Offline
+            features = json.loads(body or b"{}").get("features") or []
+        except (OSError, ValueError) as exc:
+            raise Offline from exc
+        results = []
+        for feature in features[:6]:
+            try:
+                results.append(parse_suggestion(feature))
+            except (KeyError, TypeError, ValueError):
+                continue
+        with self.lock:
+            self.suggestions[key] = (now, results)
+            for old in list(self.suggestions)[:-SUGGEST_CACHE_ENTRIES]:
+                del self.suggestions[old]
+        return results
 
     def geocode(self, settings, q):
         """An explicit search: only the words typed are sent."""

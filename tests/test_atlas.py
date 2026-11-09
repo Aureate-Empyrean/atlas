@@ -293,7 +293,7 @@ def test_backup_round_trip(client, tmp_path):
 def test_manifest_and_one_canonical_icon(client):
     manifest = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["id"] == "atlas" and manifest["resources"] == [{"type": "place", "resolvable": True}]
-    assert manifest["projections"]["provides"] == ["place-directory"]
+    assert manifest["projections"]["provides"] == ["place-directory", "address-suggest"]
     assert "network.egress" in manifest["capabilities"]  # ADR 0025
     icon = (ROOT / "frontend/icon.svg").read_text(encoding="utf-8")
     assert all(c in icon for c in ("#A5D8FF", "#4285D4", "#194F91"))

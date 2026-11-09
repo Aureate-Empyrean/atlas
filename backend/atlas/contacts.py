@@ -116,16 +116,25 @@ def sync(conn, items):
         seen.add(aid)
         digest = query_hash(query)
         row = rows.get(aid)
+        chosen = _chosen_position(item)
         if row and row["query_hash"] == digest:
             if row["orphaned_at"]:
                 conn.execute("UPDATE contact_locations SET orphaned_at=NULL WHERE address_id=?", (aid,))
                 row["orphaned_at"] = None
+            if chosen and row["status"] != "located":  # the owner picked it in Meridian: nothing to look up
+                conn.execute(
+                    "UPDATE contact_locations SET status='located',latitude=?,longitude=?,source='meridian',candidates=NULL,updated_at=? WHERE address_id=?",
+                    (chosen[0], chosen[1], now, aid),
+                )
+                row.update(status="located", latitude=chosen[0], longitude=chosen[1], source="meridian", candidates=None)
             continue
         # New, or the address changed: an old position (even a corrected one) is no longer true.
         status, lat, lng, source = "pending", None, None, None
         place = _linked_place(item, places)
         if place:
             status, lat, lng, source = "located", place["latitude"], place["longitude"], "place"
+        elif chosen:
+            status, lat, lng, source = "located", chosen[0], chosen[1], "meridian"
         else:
             twin = next((r for r in rows.values() if r["query_hash"] == digest and r["status"] == "located" and r["latitude"] is not None), None)
             if twin:  # the same address is only ever looked up once
@@ -150,6 +159,17 @@ def sync(conn, items):
     return rows
 
 
+def _chosen_position(item):
+    position = item.get("position")
+    if not isinstance(position, dict):
+        return None
+    try:
+        lat, lng = float(position["latitude"]), float(position["longitude"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return (lat, lng) if -90 <= lat <= 90 and -180 <= lng <= 180 else None
+
+
 def _linked_place(item, places):
     ref = REF.fullmatch(str(item.get("place_ref") or ""))
     if ref and ref[1] == "atlas" and ref[2] == "place":
@@ -170,9 +190,8 @@ def build_layer(conn, items):
     custom = overrides(conn)
     out = []
     for item in items:
-        row = rows.get(item["id"])
-        if not row:
-            continue
+        # An address with nothing to place on a map (a PO box, say) is still an address.
+        row = rows.get(item["id"]) or {"status": "no_location", "latitude": None, "longitude": None, "source": None, "candidates": None}
         contact_override = custom["contact"].get(item["resource"])
         address_override = custom["address"].get(item["id"])
         located = row["status"] == "located" and row["latitude"] is not None

@@ -7,12 +7,12 @@ the rest of your Empyrean data. Architecture: [`architecture/modules/atlas.md`](
 
 | | |
 | --- | --- |
-| Module ID, version | `atlas`, 0.4.0 (schema 3) on aetest; 0.3.0 in production |
+| Module ID, version | `atlas`, 0.5.0 (schema 3) on aetest; 0.3.0 in production |
 | Port | 19333 |
 | Nexus range | `>=0.1.8,<0.2.0` |
 | Capabilities | `ui.application`, `storage.data`, `references.read`, `references.resolve`, `projections.read` (only Meridian's `contact-addresses`), `network.egress` (optional, off until the owner turns the online map on) |
 | Resources | `place` (resolvable; the label is the name only) |
-| Projection provided | `place-directory` v1: query `{q, limit ≤20}`, items `{id, resource, label, category}`. Never coordinates or personal states |
+| Projections provided | `place-directory` v1: query `{q, limit ≤20}`, items `{id, resource, label, category}`. Never coordinates or personal states. `address-suggest` (since 0.5.0, readable by Meridian): one status item, then address suggestions. Reaches the provider only while the online map is on |
 | Backlinks | Follows [the standard](../architecture/concepts/backlinks.md); reads labels for `chronos:event` and `meridian:interaction` |
 | Backup | Backup v1, format `atlas-sqlite` |
 | Identity | Sapphire Blue (`#A5D8FF`, `#4285D4`, `#194F91`, background `#101A2A`) |
@@ -33,6 +33,10 @@ Sections and Places are browser history entries through the Nexus navigation con
 Meridian contact selection is an entry too, at `/map/contact`: the URL never says who it is. The selection, map
 position and Library search are private per-entry state. An unsaved Place editor stays open while the address moves,
 and is kept as a draft when Atlas is left. See `../empyrean-nexus/docs/navigation-history.md`.
+
+## Meridian addresses in the Library (0.5.0 on aetest)
+
+The Library lists Meridian's addresses alongside Places, with a source filter, search that ignores case and accents, **Open in Meridian** at the exact address, **Show on map** or **Locate**, and **Make a place**. They are read live under the same access boundary as Meridian. Atlas still stores no names or address text, nothing is shown during an outage, and a contact removed in Meridian leaves at once. Atlas also answers Meridian's address searches through Photon. See [ADR 0031](../architecture/decisions/0031-address-suggestions-through-atlas.md).
 
 ## Limits
 

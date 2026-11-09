@@ -123,6 +123,7 @@ class MapSettings(BaseModel):
     online: bool
     tile_url: str = Field(default=maps.DEFAULT_TILES, max_length=500)
     geocoder_url: str = Field(default=maps.DEFAULT_GEOCODER, max_length=500)
+    suggest_url: str | None = Field(default=None, max_length=500)  # left as it is when omitted
 
 
 class CategoryIn(BaseModel):
@@ -206,6 +207,7 @@ def create_app(data_dir=None, fetch=None, background=True):
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.db = db
     app.state.locator = locator
+    app.state.maps = app_maps
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request: Request, exc: RequestValidationError):
@@ -559,7 +561,7 @@ def create_app(data_dir=None, fetch=None, background=True):
     def put_map_settings(body: MapSettings):
         try:
             with db.connect() as conn:
-                app_maps.save(conn, body.online, body.tile_url, body.geocoder_url)
+                app_maps.save(conn, body.online, body.tile_url, body.geocoder_url, body.suggest_url)
                 return app_maps.settings(conn)
         except maps.Invalid as exc:
             raise HTTPException(422, str(exc)) from exc
@@ -621,6 +623,29 @@ def create_app(data_dir=None, fetch=None, background=True):
             if row["trashed_at"]:
                 raise HTTPException(404, "Unavailable")
             return {"resource": body["resource"], "label": row["name"][:200], "open_path": f"/places/{row['id']}"}
+
+    @app.post("/empyrean/v1/projections/address-suggest")
+    def address_suggest(body: dict, request: Request):
+        """Real-world address suggestions for Meridian's editor (ADR 0031). The first item says
+        whether the network may be used; nothing from this request is stored or logged."""
+        require_resolver(request)
+        query = body.get("query") if isinstance(body.get("query"), dict) else {}
+        with db.connect() as conn:
+            settings = app_maps.settings(conn)
+        status = {"kind": "status", "online": settings["online"], "provider": maps.SUGGEST_PROVIDER, "attribution": f"{maps.SUGGEST_PROVIDER} · {settings['attribution']}", "outcome": "ok"}
+        if query.get("status"):
+            return {"items": [status], "next_cursor": None}
+        text = " ".join(str(query.get("q") or "").split())
+        if not settings["online"]:
+            return {"items": [{**status, "outcome": "atlas_offline"}], "next_cursor": None}
+        if len(text) < 3:
+            return {"items": [status], "next_cursor": None}
+        try:
+            return {"items": [status, *app_maps.suggest(settings, text)], "next_cursor": None}
+        except maps.Busy:
+            return {"items": [{**status, "outcome": "busy"}], "next_cursor": None}
+        except maps.Offline:
+            return {"items": [{**status, "outcome": "offline"}], "next_cursor": None}
 
     @app.post("/empyrean/v1/projections/place-directory")
     def place_directory(body: dict, request: Request):
