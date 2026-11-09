@@ -5,6 +5,32 @@
 Atlas had no repository until 2026-11-09. Versions 0.1.0 and 0.2.0 were never committed, and no source for them is
 tagged here. The history starts at 0.3.0. Nothing was backdated or reconstructed.
 
+## 0.4.0
+
+| | |
+| --- | --- |
+| Tag | `v0.4.0` (annotated, tag object `c466f62ce5f834a16e3cdbd8904d280920a7ac64`) |
+| Release commit | `bd739d42631e81446f0d5ac880a1f9218b67f991`, created 2026-11-09 before any deployment |
+| Release image | `sha256:2966105a515ab0e181f76ff640ea5f79bc66e4301aa38faeee464cf7def41f70`, built from a clean clone of this commit |
+| Image built | 2026-11-09T18:15:02.347253045Z |
+| Deployed | **Not deployed to Exodus.** This image runs on aetest |
+| CI | This repository has no GitHub Actions workflow. The equivalent checks ran locally from a clean clone |
+
+### What has been demonstrated
+
+Checked on 2026-11-09. Evidence is in `VALIDATION_P1_NAVIGATION_AETEST_2026-11-09.md` at the workspace root.
+
+- All 20 files under the image's `/app/backend` and `/app/frontend` are byte-identical to this commit.
+- Against the working-tree build first validated on aetest, those files match except for line endings: 20 byte-identical and 0 differing only in line endings.
+- This exact image was then installed on aetest, and the universal navigation journeys passed against it in Chromium, WebKit and Firefox on Linux.
+- The unit suite passes on the clean clone: 77 passed.
+
+### What has not been demonstrated
+
+- The build is **not reproducible to the digest**. Rebuilds of unchanged source gave different image IDs.
+- Physical mouse buttons, native keyboard shortcuts, Safari and real phones have not been checked.
+- It has not run in production.
+
 ## 0.3.0
 
 | | |
