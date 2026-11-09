@@ -7,7 +7,7 @@ the rest of your Empyrean data. Architecture: [`architecture/modules/atlas.md`](
 
 | | |
 | --- | --- |
-| Module ID, version | `atlas`, 0.3.0 (schema 3) |
+| Module ID, version | `atlas`, 0.4.0 (schema 3) on aetest; 0.3.0 in production |
 | Port | 19333 |
 | Nexus range | `>=0.1.8,<0.2.0` |
 | Capabilities | `ui.application`, `storage.data`, `references.read`, `references.resolve`, `projections.read` (only Meridian's `contact-addresses`), `network.egress` (optional, off until the owner turns the online map on) |
@@ -26,6 +26,13 @@ layers, click-to-place and an explicit place search. Viewed areas stay available
 ## Markers and categories (0.3.0)
 
 Every marker is a colored pin with a white [Lucide](https://lucide.dev) icon (ISC, `frontend/LUCIDE-LICENSE`; regenerate the bundle with `scripts/build_icons.py`). Categories are managed under Categories, and a Place can override its color or icon. Meridian's contact addresses appear by themselves in their own layer: Atlas stores positions and appearance only, never names or address text. See [ADR 0030](../architecture/decisions/0030-atlas-markers-categories-and-contact-layer.md).
+
+## Navigation (0.4.0 on aetest)
+
+Sections and Places are browser history entries through the Nexus navigation contract (`frontend/navigation.js`). A
+Meridian contact selection is an entry too, at `/map/contact`: the URL never says who it is. The selection, map
+position and Library search are private per-entry state. An unsaved Place editor stays open while the address moves,
+and is kept as a draft when Atlas is left. See `../empyrean-nexus/docs/navigation-history.md`.
 
 ## Limits
 

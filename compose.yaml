@@ -4,6 +4,6 @@ services:
     build:
       context: .
       dockerfile: deploy/Dockerfile
-    image: atlas:0.3.0
+    image: atlas:0.4.0
     network_mode: none
     entrypoint: [python, -c, "print('Install manifest.local.json in Nexus; the broker owns the runtime.')"]

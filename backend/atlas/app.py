@@ -767,6 +767,14 @@ def create_app(data_dir=None, fetch=None, background=True):
         script = (ROOT / "frontend/app.js").read_text(encoding="utf-8").replace(
             "/*ATLAS_ICON*/", "data:image/svg+xml;base64," + icon
         ).replace("/*LUCIDE_ICONS*/null", (ROOT / "frontend/lucide-icons.json").read_text(encoding="utf-8").strip())
+        # Nexus navigation contract: the shared SDK, then Atlas's adapter.
+        script = "\n".join(
+            [
+                script,
+                (ROOT / "frontend/vendor/nexus-navigation.js").read_text(encoding="utf-8"),
+                (ROOT / "frontend/navigation.js").read_text(encoding="utf-8"),
+            ]
+        )
         return html.replace("/*STYLE*/", style).replace("/*SCRIPT*/", script)
 
     return app

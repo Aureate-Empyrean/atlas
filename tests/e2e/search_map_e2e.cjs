@@ -135,7 +135,8 @@ print(json.dumps(c.execute("select target,readers from resource_references where
   await open1.waitFor({ timeout: 20000 });
   await open1.click();
   await page.waitForURL(/\/app\/modules\/meridian\?path=/, { timeout: 15000 });
-  check(page.url().includes(encodeURIComponent(`/people/${person.id}`)), "a backlink opens the exact Meridian profile");
+  // Meridian 0.11.0: the link names the Interaction itself, shown on its participant's profile.
+  check(page.url().includes(encodeURIComponent(`/interactions/${iid}`)), "a backlink opens the exact Meridian Interaction");
   await pane.locator(".person-name", { hasText: `Hľadaná Osoba ${RUN}` }).waitFor({ timeout: 20000 });
   check(true, "Meridian shows that person after the jump");
 
@@ -158,7 +159,10 @@ print(json.dumps(c.execute("select target,readers from resource_references where
   await call(a, `/places/${place.id}`, "DELETE");
   await call(a, `/trash/${place.id}`, "DELETE");
   const n2 = await open(page, "mnemosyne");
-  await n2.evaluate(([w, id]) => api(`/api/w/${w}/resources/${id}`, "DELETE"), [wid, note.id]).catch(() => {});
+  await n2.evaluate(async ([w, id]) => {
+    await mutate(id, { trashed: true }); // permanent deletion is only for items already in Trash
+    await api(`/api/w/${w}/resources/${id}?confirmed=true`, "DELETE");
+  }, [wid, note.id]);
   check(errors.length === 0, `no page errors (${errors.join(" / ")})`);
   await browser.close();
   console.log(`${passed} checks passed`);

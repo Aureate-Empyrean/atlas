@@ -180,7 +180,11 @@ function render() {
   if (state.view === "categories") return viewCategories(sheet);
   return viewLibrary(sheet);
 }
+/** Inside a Nexus with the navigation contract every move is a browser history entry and is
+ * shown when Nexus confirms it (frontend/navigation.js); otherwise it is shown directly. */
 async function go(view) {
+  // Asked for the section already on screen (after an edit in it): there is nothing to commit, so refresh it.
+  if (atlasNavigation.enabled && AtlasRoutes.serialize({ view }) !== shownRoute) return commitRoute({ view });
   state.view = view;
   state.picking = null;
   closeDetail();
@@ -432,6 +436,7 @@ function gridLabel(value, pos, neg) {
   return `${+n.toFixed(3)}°${value > 0 ? pos : value < 0 ? neg : ""}`;
 }
 function draw() {
+  atlasNavigation.viewChanged();
   const c = $("#map-grid");
   if (!c) return;
   const ctx = c.getContext("2d");
@@ -905,6 +910,7 @@ async function viewTrash(sheet) {
 const LINKED_KIND = { "chronos:event": "Event in Chronos", "meridian:interaction": "Interaction in Meridian", "meridian:person": "Person in Meridian", "mnemosyne:note": "Note in Mnemosyne", "mnemosyne:task": "Task in Mnemosyne", "mnemosyne:project": "Project in Mnemosyne", "argus:photo": "Photo in Argus" };
 const LINKED_ICON = { chronos: "calendar", meridian: "people", mnemosyne: "note" };
 function closeDetail() {
+  ++detailSerial;
   state.selected = null;
   state.selectedGroup = null;
   pinsDirty = true;
@@ -915,8 +921,12 @@ function closeDetail() {
   }
   if ($("#map-stage")) draw();
 }
+let detailSerial = 0;
 async function openDetail(id, { center = false } = {}) {
+  const serial = ++detailSerial;
   const p = await api(`/places/${id}`);
+  // Superseded while loading: the late response must not open over the newer screen.
+  if (serial !== detailSerial) return;
   state.selected = p;
   state.selectedGroup = null;
   pinsDirty = true;
@@ -1073,10 +1083,36 @@ function renderContactsPanel() {
     }
   };
 }
+/** One Place: its own address when the contract is available. */
+async function openPlace(id, { center = false, section = state.view } = {}) {
+  if (!atlasNavigation.enabled) return openDetail(id, { center });
+  pendingCenter = center;
+  return commitRoute({ view: section, place: id });
+}
+/** A Meridian contact: an entry in history, but the URL does not say who. */
+function openContact(key, center) {
+  pendingContact = key;
+  pendingCenter = center;
+  return commitRoute({ view: "map", contact: true });
+}
+/** Close the detail panel. Its address goes with it: a push when the owner closes it, a
+ * replace when an action made the record go away. */
+function closeSelection(mode = "push") {
+  closeDetail();
+  if (atlasNavigation.enabled && !heldRoute && (shownParsed?.place || shownParsed?.contact)) commitRoute({ view: state.view }, mode);
+}
 function startContactPick(id) {
   const c = state.contacts.items.find((x) => x.id === id);
   state.picking = { contact: id, name: c?.name };
   closeDetail();
+  showMapForPicking();
+}
+/** Choosing a location happens on the map, wherever the owner started from. */
+function showMapForPicking() {
+  if (atlasNavigation.enabled && shownRoute !== "/") {
+    keepPicking = true;
+    return commitRoute({ view: "map" });
+  }
   state.view = "map";
   render();
 }
@@ -1168,6 +1204,7 @@ function openEditor(draft = {}) {
   paint();
   d.showModal();
   $("#pl-name", d).focus();
+  placeEditorOpened();
 }
 async function saveEditor(button) {
   const d = $("#dialog");
@@ -1207,8 +1244,10 @@ document.addEventListener("click", async (event) => {
         state.searchResults = null;
         showResults();
         $("#map-q").value = "";
+        if (atlasNavigation.enabled) return openContact(el.dataset.contactPin, true);
         return openContactDetail(el.dataset.contactPin, { center: true });
       }
+      if (atlasNavigation.enabled) return openContact(el.dataset.contactPin, el.matches(".map-result") || state.view !== "map");
       if (state.view !== "map") {
         state.view = "map";
         render();
@@ -1224,14 +1263,14 @@ document.addEventListener("click", async (event) => {
     }
     if (el.dataset.catEdit) return openCategoryDialog(categoryById(el.dataset.catEdit), () => go("categories"));
     if (el.dataset.catDelete) return openDeleteCategory(categoryById(el.dataset.catDelete));
-    if (el.dataset.place && el.matches(".place-card")) return await openDetail(el.dataset.place);
+    if (el.dataset.place && el.matches(".place-card")) return await openPlace(el.dataset.place);
     if (el.dataset.module) return await bridge("navigate", { module: el.dataset.module, ...(el.dataset.path ? { path: el.dataset.path } : {}) });
     if (el.dataset.result) {
       const item = state.searchResults[el.dataset.result === "local" ? "local" : "online"][+el.dataset.i];
       state.searchResults = null;
       showResults();
       $("#map-q").value = "";
-      if (el.dataset.result === "local") return await openDetail(item.id, { center: true });
+      if (el.dataset.result === "local") return await openPlace(item.id, { center: true });
       map.cx = lngX(item.longitude);
       map.cy = latY(item.latitude);
       map.z = Math.max(map.z, 15);
@@ -1292,7 +1331,7 @@ document.addEventListener("click", async (event) => {
         return;
       }
     }
-    if (act === "close-detail") return closeDetail();
+    if (act === "close-detail") return closeSelection();
     if (act === "close-editor") return $("#dialog").close();
     if (act === "save-place") return await saveEditor(el);
     if (act === "zoom-in" || act === "zoom-out") {
@@ -1313,12 +1352,12 @@ document.addEventListener("click", async (event) => {
       state.picking = { ...readEditor(), id: d.dataset.id || undefined, revision: d.dataset.revision || undefined, external_ref: d.dataset.external || undefined };
       d.close();
       closeDetail();
-      state.view = "map";
-      return render();
+      return showMapForPicking();
     }
     const p = state.selected;
     if (act === "edit-place" && p) return openEditor(p);
     if (act === "show-on-map" && p) {
+      if (atlasNavigation.enabled) return openPlace(p.id, { center: true, section: "map" });
       state.view = "map";
       render();
       return await openDetail(p.id, { center: true });
@@ -1326,7 +1365,7 @@ document.addEventListener("click", async (event) => {
     if (act === "trash-place" && p) {
       await api(`/places/${p.id}`, "DELETE");
       toast("Moved to Trash");
-      closeDetail();
+      closeSelection("replace");
       await refresh();
       pinsDirty = true;
       return render();
@@ -1347,7 +1386,7 @@ document.addEventListener("change", (event) => {
   draw();
 });
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !$("#dialog").open && state.selected) closeDetail();
+  if (event.key === "Escape" && !$("#dialog").open && state.selected) closeSelection();
 });
 
 (async () => {
@@ -1355,6 +1394,17 @@ document.addEventListener("keydown", (event) => {
   try {
     const context = await bridge("context");
     state.apps = context.applications || [];
+    // Inside a Nexus that supports it, the browser URL and Back/Forward follow Atlas's screens.
+    if (context.navigation?.versions?.includes(1)) {
+      try {
+        if (await atlasNavigation.start(context)) {
+          if (shownRoute) await queueNavigation(shownRoute, "replace").catch(() => {});
+          return;
+        }
+      } catch {
+        /* the host did not answer the handshake: keep the in-memory navigation below */
+      }
+    }
     await refresh();
     render();
     loadContacts();
