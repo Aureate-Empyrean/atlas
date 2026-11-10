@@ -3,7 +3,7 @@
   "id": "atlas",
   "name": "Atlas",
   "description": "Your personal geographic layer: the places that matter to you, on a map and in a library, linked with the rest of your Empyrean data.",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "publisher": {
     "name": "Aureate Empyrean",
     "originalAuthors": [

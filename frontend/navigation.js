@@ -272,9 +272,15 @@ const atlasNavigation = EmpyreanNavigation.createClient({
 });
 
 let navigationQueue = Promise.resolve();
+let queuedRoute = null; // the newest move still on its way, so a repeat is compared with it
 function queueNavigation(reference, mode) {
+  queuedRoute = reference;
   const next = navigationQueue.catch(() => {}).then(() => atlasNavigation.navigate(reference, mode));
   navigationQueue = next;
+  const clear = () => {
+    if (navigationQueue === next) queuedRoute = null;
+  };
+  next.then(clear, clear);
   return next;
 }
 function commitRoute(route, mode = "push") {

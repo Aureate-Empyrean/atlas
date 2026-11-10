@@ -85,13 +85,57 @@ function bridge(action, data = {}) {
 }
 const api = (path, method = "GET", body) => bridge("request", { path: "/api" + path, method, ...(body === undefined ? {} : { body }) });
 
+/* ── Motion: Meridian's durations and curves, on transform and opacity only. Nothing waits for an
+   animation, so a repeated click can never catch the interface part-way through one. ── */
+const MOTION = { fast: 120, page: 220, panel: 260, exit: 160, ease: "cubic-bezier(.22,1,.36,1)", exitEase: "cubic-bezier(.4,0,1,1)" };
+const reducedMotion = () => !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+function animate(el, frames, duration = MOTION.page, easing = MOTION.ease, extra = {}) {
+  if (!el?.animate || reducedMotion()) return null;
+  return el.animate(frames, { duration, easing, ...extra });
+}
+/** Lets something that has just gone from the page fade out as a copy, so the real one changes at once. */
+function fadeAway(el, to, duration = MOTION.exit) {
+  if (!el?.isConnected || reducedMotion()) return;
+  const copy = el.cloneNode(true);
+  copy.removeAttribute("id");
+  copy.querySelectorAll("[id]").forEach((x) => x.removeAttribute("id"));
+  copy.setAttribute("aria-hidden", "true");
+  copy.inert = true;
+  copy.style.pointerEvents = "none";
+  el.parentNode.append(copy);
+  animate(copy, [{ opacity: 1 }, { opacity: 0, ...to }], duration, MOTION.exitEase)?.finished.finally(() => copy.remove());
+}
+/** Replaces a list. Cards that stay glide to their new place; new ones fade in. */
+function swapList(box, html) {
+  const keyOf = (el) => el.dataset.place || el.dataset.contactEntry || "";
+  const cards = () => [...box.children].filter(keyOf);
+  const before = new Map(reducedMotion() ? [] : cards().map((el) => [keyOf(el), el.getBoundingClientRect()]));
+  const hadCards = before.size > 0;
+  box.innerHTML = html;
+  if (reducedMotion()) return;
+  let fresh = 0;
+  for (const el of cards()) {
+    const now = el.getBoundingClientRect();
+    if (now.bottom < 0 || now.top > innerHeight) continue;
+    const old = before.get(keyOf(el));
+    if (old) {
+      const [dx, dy] = [old.left - now.left, old.top - now.top];
+      if (dx || dy) animate(el, [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], MOTION.page);
+    } else animate(el, [{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], MOTION.page, MOTION.ease, { delay: Math.min(fresh++, 8) * 14, fill: "backwards" });
+  }
+  if (hadCards && !cards().length) animate($(".empty", box), [{ opacity: 0 }, { opacity: 1 }], MOTION.page);
+}
+
 /* ── Feedback ── */
 function toast(message, tone = "") {
   const el = document.createElement("div");
   el.className = `ae-toast ae-glass ${tone ? "ae-toast--" + tone : ""}`;
   el.textContent = message;
   $("#toasts").append(el);
-  setTimeout(() => el.remove(), 4200);
+  setTimeout(() => {
+    const leaving = animate(el, [{ opacity: 1 }, { opacity: 0, transform: "translateY(6px)" }], MOTION.exit, MOTION.exitEase);
+    leaving ? leaving.finished.finally(() => el.remove()) : el.remove();
+  }, 4200);
 }
 function confirmDialog(title, text, label) {
   const d = $("#dialog");
@@ -127,8 +171,16 @@ function shell() {
     <aside id="detail" class="detail ae-glass" aria-label="Place details" hidden></aside>`;
 }
 function nav() {
-  const item = (view, ic, text, count) => `<button class="nav-item" data-go="${view}" ${state.view === view ? 'aria-current="page"' : ""}>${icon(ic)}<span>${text}</span>${count ? `<span class="count">${count}</span>` : ""}</button>`;
-  $("#nav").innerHTML = item("map", "map", "Map") + item("library", "library", "Library", state.counts.active) + item("categories", "tag", "Categories") + item("trash", "trash", "Trash", state.counts.trashed) + item("settings", "fit", "Settings");
+  const box = $("#nav");
+  const items = [["map", "map", "Map"], ["library", "library", "Library", state.counts.active], ["categories", "tag", "Categories"], ["trash", "trash", "Trash", state.counts.trashed], ["settings", "fit", "Settings"]];
+  if (!box.children.length) box.innerHTML = items.map(([view, ic, text]) => `<button class="nav-item" data-go="${view}">${icon(ic)}<span>${text}</span><span class="count" hidden></span></button>`).join("");
+  for (const [view, , , count] of items) {
+    const button = $(`[data-go="${view}"]`, box);
+    state.view === view ? button.setAttribute("aria-current", "page") : button.removeAttribute("aria-current");
+    const badge = $(".count", button);
+    badge.hidden = !count;
+    badge.textContent = count || "";
+  }
 }
 async function refresh() {
   const [s, list, filters] = await Promise.all([api("/state"), api("/places"), api("/map-filters")]);
@@ -141,6 +193,7 @@ async function refresh() {
 }
 /* The contact layer loads on its own: Meridian being slow or away must never hold up the map. */
 let contactTimer = null;
+let awaitingFit = false; // the first view was fitted before Meridian's markers had arrived
 async function loadContacts() {
   clearTimeout(contactTimer);
   try {
@@ -156,6 +209,11 @@ async function loadContacts() {
   if (state.view === "library" && $("#place-list")) loadLibrary().catch(() => {});
   if ($("#contacts-panel")) renderContactsPanel();
   if (state.selectedGroup) refreshContactDetail();
+  paintSourceCount();
+  if (awaitingFit && $("#map-stage") && state.contacts.availability !== "loading") {
+    awaitingFit = false;
+    if (contactGroups().length && !state.selected && !state.selectedGroup) fitPlaces();
+  }
   const busy = state.contacts.working || (state.contacts.pending && state.contacts.geocoding && state.contacts.online);
   contactTimer = setTimeout(() => {
     if (document.visibilityState === "visible") loadContacts();
@@ -169,22 +227,34 @@ function saveFilters() {
   clearTimeout(filterTimer);
   filterTimer = setTimeout(() => api("/map-filters", "PUT", state.filters).catch((e) => toast(e.message, "danger")), 250);
 }
+let motionSection = null;
+function enterSection(sheet, map) {
+  if (map) $$(".map-top, .map-layers, .map-zoom, .map-attribution, .map-consent", sheet).forEach((el) => animate(el, [{ opacity: 0 }, { opacity: 1 }], MOTION.page));
+  else animate($(".page", sheet), [{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], MOTION.page);
+}
 function render() {
   nav();
   const sheet = $("#sheet");
   sheet.classList.toggle("is-map", state.view === "map");
-  if (state.view === "map") return viewMap(sheet);
+  const changed = motionSection !== state.view;
+  motionSection = state.view;
+  if (state.view === "map") {
+    viewMap(sheet);
+    if (changed) enterSection(sheet, true);
+    return;
+  }
   stopMap();
-  if (state.view === "trash") return viewTrash(sheet);
-  if (state.view === "settings") return viewSettings(sheet);
-  if (state.view === "categories") return viewCategories(sheet);
-  return viewLibrary(sheet);
+  const shown = state.view === "trash" ? viewTrash(sheet) : state.view === "settings" ? viewSettings(sheet) : state.view === "categories" ? viewCategories(sheet) : viewLibrary(sheet);
+  if (shown?.then) return shown.then(() => changed && enterSection(sheet));
+  if (changed) enterSection(sheet);
 }
 /** Inside a Nexus with the navigation contract every move is a browser history entry and is
  * shown when Nexus confirms it (frontend/navigation.js); otherwise it is shown directly. */
 async function go(view) {
   // Asked for the section already on screen (after an edit in it): there is nothing to commit, so refresh it.
-  if (atlasNavigation.enabled && AtlasRoutes.serialize({ view }) !== shownRoute) return commitRoute({ view });
+  const target = AtlasRoutes.serialize({ view });
+  if (atlasNavigation.enabled && queuedRoute === target) return;
+  if (atlasNavigation.enabled && target !== (queuedRoute ?? shownRoute)) return commitRoute({ view });
   state.view = view;
   state.picking = null;
   closeDetail();
@@ -245,7 +315,41 @@ function contactGroups() {
     return { ...g, marker: same ? first : MERIDIAN_MARKER, former: g.members.every((m) => !m.current) };
   });
 }
-function fitPlaces() {
+/* Button, search and "show on map" moves glide; wheel, drag and pinch stay direct. */
+let flight = 0;
+let flightTarget = null;
+const stopFlight = () => {
+  awaitingFit = false;
+  flightTarget = null;
+  return ++flight;
+};
+/* Repeated zoom clicks add up from where the last one was heading, not from the middle of its glide. */
+const flightZoom = () => flightTarget ?? map.z;
+function flyTo(to, duration = 320) {
+  const mine = ++flight;
+  flightTarget = to.z;
+  const from = { cx: map.cx, cy: map.cy, z: map.z };
+  if (reducedMotion() || document.hidden || !$("#map-stage")) {
+    flightTarget = null;
+    Object.assign(map, to);
+    clampView();
+    return draw();
+  }
+  const start = performance.now();
+  const step = (now) => {
+    if (mine !== flight || !$("#map-stage")) return;
+    const t = Math.min(1, (now - start) / duration);
+    const eased = 1 - (1 - t) ** 3;
+    for (const k of ["cx", "cy", "z"]) map[k] = from[k] + (to[k] - from[k]) * eased;
+    clampView();
+    draw();
+    if (t < 1) requestAnimationFrame(step);
+    else flightTarget = null;
+  };
+  requestAnimationFrame(step);
+}
+function fitPlaces({ instant = false } = {}) {
+  const from = { cx: map.cx, cy: map.cy, z: map.z };
   const list = [...visiblePlaces(), ...contactGroups()];
   const [w, h] = viewSize();
   if (!list.length) {
@@ -263,10 +367,30 @@ function fitPlaces() {
     map.z = Math.min(map.z, 14);
   }
   clampView();
-  draw();
+  if (instant) return draw();
+  const to = { cx: map.cx, cy: map.cy, z: map.z };
+  Object.assign(map, from);
+  flyTo(to);
+}
+/* Shown only when the map really has nothing on it: Meridian's markers count, and so do layers
+   and filters. It says nothing until Meridian has answered, so it cannot flash over real markers. */
+function updateMapEmpty() {
+  const box = $("#map-empty");
+  if (!box) return;
+  let text = null;
+  if (!state.picking && state.contacts.availability !== "loading" && !visiblePlaces().length && !contactGroups().length) {
+    const contacts = state.contacts.availability === "available" && state.contacts.items.some((c) => c.latitude !== null);
+    if (state.places.some(hasLocation) || contacts) text = ["Nothing to show with these layers", "Turn a layer back on to see your places and contacts."];
+    else text = [state.places.length ? "None of your places has a location yet" : "The places that matter to you", "Add a place by clicking the map, or search for one."];
+  }
+  const was = !box.hidden;
+  if (text && (!was || $("h2", box).textContent !== text[0])) box.innerHTML = `<h2>${text[0]}</h2><p>${text[1]}</p>`;
+  if (!text && was) fadeAway(box);
+  box.hidden = !text;
+  if (text && !was) animate(box, [{ opacity: 0 }, { opacity: 1 }], MOTION.page);
 }
 function viewMap(sheet) {
-  const located = state.places.filter(hasLocation).length + state.contacts.items.filter((c) => c.latitude !== null).length;
+  knownPins = null;
   sheet.innerHTML = `<div class="map-wrap">
     <div class="map-stage" id="map-stage" tabindex="0" role="application" aria-label="Map of your places. Arrow keys move it, plus and minus zoom.">
       <canvas id="map-tiles" aria-hidden="true"></canvas><canvas id="map-grid" aria-hidden="true"></canvas><div class="pins" id="pins"></div>
@@ -284,14 +408,15 @@ function viewMap(sheet) {
       <button class="map-tool" data-act="fit" aria-label="Fit all places" title="Fit all places">${icon("fit")}</button>
     </div>
     ${state.picking ? `<div class="map-picking ae-glass" role="status"><span>Click the map to choose the location.</span><button class="ae-btn ae-btn--sm" data-act="cancel-pick">Cancel</button></div>` : ""}
-    ${!located && !state.picking ? `<div class="map-empty ae-glass"><h2>${state.places.length ? "None of your places has a location yet" : "The places that matter to you"}</h2><p>Add a place by clicking the map, or search for one.</p></div>` : ""}
+    <div class="map-empty ae-glass" id="map-empty" hidden></div>
   </div>`;
   renderLayers();
   bindMap();
   resizeCanvas();
   if (!map.ready) {
     map.ready = true;
-    fitPlaces();
+    fitPlaces({ instant: true });
+    awaitingFit = true;
   } else {
     clampView();
     draw();
@@ -344,12 +469,16 @@ function renderPins() {
     const name = g.members.length > 1 ? `${g.members.length} contacts` : g.members[0].name;
     return { lat: g.latitude, lng: g.longitude, attr: `data-contact-pin="${esc(g.key)}"`, marker: g.marker, name, selected: state.selectedGroup === g.key, faded: g.former, count: g.members.length > 1 ? g.members.length : 0, label: `${name}, from Meridian` };
   });
+  const seen = knownPins;
+  knownPins = new Set([...places, ...people].map((m) => m.attr));
   box.innerHTML = [...places, ...people]
     .sort((a, b) => b.lat - a.lat)
-    .map((m) => `<button class="pin ${m.selected ? "is-selected" : ""} ${m.faded ? "is-faded" : ""}" ${m.attr} data-lat="${m.lat}" data-lng="${m.lng}" data-color="${esc(m.marker.color)}" data-icon="${esc(m.marker.icon)}" aria-label="${esc(m.label)}" title="${esc(m.name)}">${markerSvg(m.marker)}${m.count ? `<span class="pin-count">${m.count}</span>` : ""}${m.badge ? `<span class="pin-badge">${lucideIcon(m.badge, 10)}</span>` : ""}<span class="pin-label">${esc(m.name)}</span></button>`)
+    .map((m) => `<button class="pin ${!seen || !seen.has(m.attr) ? "is-new" : ""} ${m.selected ? "is-selected" : ""} ${m.faded ? "is-faded" : ""}" ${m.attr} data-lat="${m.lat}" data-lng="${m.lng}" data-color="${esc(m.marker.color)}" data-icon="${esc(m.marker.icon)}" aria-label="${esc(m.label)}" title="${esc(m.name)}">${markerSvg(m.marker)}${m.count ? `<span class="pin-count">${m.count}</span>` : ""}${m.badge ? `<span class="pin-badge">${lucideIcon(m.badge, 10)}</span>` : ""}<span class="pin-label">${esc(m.name)}</span></button>`)
     .join("");
   placePins();
+  updateMapEmpty();
 }
+let knownPins = null;
 function placePins() {
   const box = $("#pins");
   if (!box) return;
@@ -501,6 +630,7 @@ function showResults() {
   if (!box) return;
   const r = state.searchResults;
   if (!r) return (box.hidden = true);
+  if (box.hidden) animate(box, [{ opacity: 0, transform: "translateY(-4px)" }, { opacity: 1, transform: "none" }], MOTION.fast);
   box.hidden = false;
   const people = (r.contacts || []).map((c) => `<button class="map-result" data-contact-pin="${esc(c.group)}">${markerSvg(c.marker, 17)}<span class="grow"><span class="primary">${esc(c.name)}</span><span class="secondary">${esc(c.text)}</span></span></button>`).join("");
   const local = r.local.map((p, i) => `<button class="map-result" data-result="local" data-i="${i}">${markerSvg(p.marker, 17)}<span class="grow"><span class="primary">${esc(p.name)}</span><span class="secondary">${esc(p.address || "Your place")}</span></span></button>`).join("");
@@ -535,10 +665,12 @@ function bindMap() {
   };
   stage.addEventListener("wheel", (e) => {
     e.preventDefault();
+    stopFlight();
     zoomAt(...local(e), -Math.sign(e.deltaY) * 0.45);
   }, { passive: false });
   stage.addEventListener("pointerdown", (e) => {
     if (e.target.closest("[data-pin], [data-contact-pin]")) return;
+    stopFlight();
     stage.setPointerCapture(e.pointerId);
     pointers.set(e.pointerId, local(e));
     moved = 0;
@@ -576,6 +708,7 @@ function bindMap() {
   stage.addEventListener("pointerup", end);
   stage.addEventListener("pointercancel", end);
   stage.addEventListener("keydown", (e) => {
+    stopFlight();
     const size = worldSize();
     const stepPx = 80;
     const [w, h] = viewSize();
@@ -662,18 +795,27 @@ async function loadLibrary() {
     : availability === "loading" ? `<p class="meta library-note">Loading addresses from Meridian…</p>`
     : availability !== "available" ? `<div class="notice library-note" role="status">Meridian addresses are not shown right now. ${esc(contactNote(availability))}</div>` : "";
   const filtered = f.q || f.view !== "all" || f.category || f.source !== "all";
-  box.innerHTML = notice + (rows.length ? rows.map((r) => r.html).join("") : `<div class="empty"><h3>${filtered ? "Nothing matches" : "No places yet"}</h3><p>${filtered ? "Try another search or filter." : "Add a place by name, and give it a location whenever you know it. Addresses you add in Meridian appear here by themselves."}</p></div>`);
+  swapList(box, notice + (rows.length ? rows.map((r) => r.html).join("") : `<div class="empty"><h3>${filtered ? "Nothing matches" : "No places yet"}</h3><p>${filtered ? "Try another search or filter." : "Add a place by name, and give it a location whenever you know it. Addresses you add in Meridian appear here by themselves."}</p></div>`));
 }
 function placeCard(p) {
   const where = p.address || (hasLocation(p) ? coords(p) : "No location yet");
   const facts = [p.category, ...p.tags].filter(Boolean).join(" · ");
-  return `<button class="place-card" data-place="${esc(p.id)}">${markerSvg(p.marker, 26)}<span class="grow"><span class="primary">${esc(p.name)}${p.inactive ? ' <span class="tag">Historical</span>' : ""}</span><span class="secondary">${esc(where)}</span>${facts ? `<span class="secondary">${esc(facts)}</span>` : ""}</span></button>`;
+  return `<button class="place-card" data-place="${esc(p.id)}"><span class="card-head">${markerSvg(p.marker, 26)}<span class="card-title" title="${esc(p.name)}">${esc(p.name)}</span>${p.inactive ? '<span class="tag">Historical</span>' : ""}</span><span class="card-body"><span class="card-address">${esc(where)}</span>${facts ? `<span class="card-facts">${esc(facts)}</span>` : ""}</span></button>`;
+}
+function geoStatus(c) {
+  if (c.status === "no_location") return ["Nothing to place on a map", "is-none"];
+  if (c.latitude !== null) return [c.approximate ? "Approximate location" : c.source === "manual" ? "Location set by you" : "On the map", "is-located"];
+  return [{ ambiguous: "Several possible locations", not_found: "Location not found" }[c.status] || "No location yet", "is-waiting"];
 }
 function contactCard(c) {
-  const facts = [cap(c.address_label), c.primary && "Primary", !c.current && "Former address", c.status === "no_location" ? "Nothing to place on a map" : c.latitude === null && "No location yet"].filter(Boolean).join(" · ");
+  const facts = [cap(c.address_label), c.primary && "Primary", !c.current && "Former address"].filter(Boolean).join(" · ");
   const canOpen = state.apps.some((a) => a.id === "meridian");
-  return `<div class="place-card is-static contact-entry" data-contact-entry="${esc(c.id)}">${markerSvg(c.marker, 26)}<span class="grow"><span class="primary">${esc(c.name)} <span class="tag source-tag">${icon("lock")} Meridian</span></span><span class="secondary">${esc(c.text)}</span>${facts ? `<span class="secondary">${esc(facts)}</span>` : ""}
-    <span class="detail-actions">${canOpen ? `<button class="ae-btn ae-btn--sm" data-module="meridian" data-path="${esc(c.open_path)}">${icon("external")}<span>Open in Meridian</span></button>` : ""}${c.latitude !== null ? `<button class="ae-btn ae-btn--sm" data-contact-pin="${esc(c.group)}">${icon("map")}<span>Show on map</span></button>` : c.status === "no_location" ? "" : `<button class="ae-btn ae-btn--sm" data-act="contacts-panel">${icon("map")}<span>Locate</span></button>`}<button class="ae-btn ae-btn--sm ae-btn--quiet" data-act="contact-to-place" data-id="${esc(c.id)}">${icon("plus")}<span>Make a place</span></button></span></span></div>`;
+  const [geo, tone] = geoStatus(c);
+  return `<div class="place-card is-static contact-entry" data-contact-entry="${esc(c.id)}">
+    <div class="card-head">${markerSvg(c.marker, 26)}<span class="card-title" title="${esc(c.name)}">${esc(c.name)}</span><span class="source-chip" title="Owned by Meridian. Read-only in Atlas.">${icon("lock")}<span>Meridian</span></span></div>
+    <div class="card-body"><span class="card-address">${esc(c.text)}</span>${facts ? `<span class="card-facts">${esc(facts)}</span>` : ""}<span class="card-geo ${tone}">${esc(geo)}</span></div>
+    <div class="card-actions">${canOpen ? `<button class="ae-btn ae-btn--sm" data-module="meridian" data-path="${esc(c.open_path)}">${icon("external")}<span>Open in Meridian</span></button>` : ""}${c.latitude !== null ? `<button class="ae-btn ae-btn--sm" data-contact-pin="${esc(c.group)}">${icon("map")}<span>Show on map</span></button>` : c.status === "no_location" ? "" : `<button class="ae-btn ae-btn--sm" data-act="contacts-panel">${icon("map")}<span>Locate</span></button>`}<button class="ae-btn ae-btn--sm ae-btn--quiet" data-act="contact-to-place" data-id="${esc(c.id)}">${icon("plus")}<span>Make a place</span></button></div>
+  </div>`;
 }
 function viewLibrary(sheet) {
   const f = state.filter;
@@ -716,11 +858,34 @@ function viewLibrary(sheet) {
 }
 
 /* ── Categories ── */
+function sourceCountText() {
+  const c = state.contacts;
+  if (c.availability === "loading") return "Asking Meridian…";
+  if (c.availability !== "available") return contactNote(c.availability);
+  return `${c.items.length} ${c.items.length === 1 ? "address" : "addresses"}`;
+}
+function paintSourceCount() {
+  const box = $("#source-count");
+  if (box) box.textContent = sourceCountText();
+}
 function viewCategories(sheet) {
-  const card = (c) => `<div class="place-card is-static category-card" data-category-card="${esc(c.id)}">${markerSvg(c, 30)}<span class="grow"><span class="primary">${esc(c.name)}${c.system ? ` <span class="tag">${icon("lock")} Managed by Atlas</span>` : ""}</span><span class="secondary">${esc(c.description || "No description")}</span>${c.system ? `<span class="secondary">${state.contacts.items.length} ${state.contacts.items.length === 1 ? "address" : "addresses"} from your contacts</span>` : `<span class="secondary">${c.places} ${c.places === 1 ? "place" : "places"}</span>`}</span>${c.system ? "" : `<button class="ae-btn ae-btn--sm" data-cat-edit="${esc(c.id)}">${icon("edit")}<span>Edit</span></button><button class="ae-btn ae-btn--sm ae-btn--quiet is-danger" data-cat-delete="${esc(c.id)}">Delete</button>`}</div>`;
+  const count = (n) => `${n} ${n === 1 ? "place" : "places"}`;
+  const card = (c) => `<article class="category-card" data-category-card="${esc(c.id)}">
+      <header class="cat-head">${markerSvg(c, 34)}<div class="cat-title"><h3>${esc(c.name)}</h3><p>${count(c.places)}</p></div></header>
+      <p class="cat-desc ${c.description ? "" : "is-empty"}">${esc(c.description || "No description")}</p>
+      <div class="cat-actions"><button class="ae-btn ae-btn--sm" data-cat-edit="${esc(c.id)}" aria-label="Edit ${esc(c.name)}">${icon("edit")}<span>Edit</span></button><button class="ae-btn ae-btn--sm ae-btn--quiet is-danger" data-cat-delete="${esc(c.id)}" aria-label="Delete ${esc(c.name)}">${icon("trash")}<span>Delete</span></button></div>
+    </article>`;
+  const canOpen = state.apps.some((a) => a.id === "meridian");
+  const source = (c) => `<div class="source-row" data-category-card="${esc(c.id)}">${markerSvg(c, 30)}
+      <div class="source-text"><h3>Meridian contacts</h3><p><span class="source-chip">${icon("lock")}<span>Owned by Meridian</span></span><span>Read-only in Atlas</span><span id="source-count">${esc(sourceCountText())}</span></p></div>
+      <div class="source-actions"><button class="ae-btn ae-btn--sm" data-act="source-library">${icon("library")}<span>Show in Library</span></button>${canOpen ? `<button class="ae-btn ae-btn--sm ae-btn--quiet" data-module="meridian">${icon("external")}<span>Open Meridian</span></button>` : ""}</div>
+    </div>`;
+  const own = state.categories.filter((c) => !c.system);
+  const sources = state.categories.filter((c) => c.system);
   sheet.innerHTML = `<div class="page"><header class="head"><div><p class="eyebrow">Atlas</p><h1 class="display" data-heading tabindex="-1">Categories</h1><p class="meta">Each category gives its places a color and an icon. A place can still have its own.</p></div>
       <button class="ae-btn ae-btn--primary" data-act="new-category">${icon("plus")}<span>New category</span></button></header>
-    <div class="place-list">${state.categories.map(card).join("")}</div></div>`;
+    <div class="category-grid">${own.length ? own.map(card).join("") : `<div class="empty"><h3>No categories yet</h3><p>Categories give your places a color and an icon.</p></div>`}</div>
+    ${sources.length ? `<section class="source-section"><h2>Connected sources</h2><p class="meta">Addresses that other modules share with Atlas. They appear on the map and in the Library, and are changed where they belong.</p>${sources.map(source).join("")}</section>` : ""}</div>`;
 }
 const SWATCHES = ["#e5484d", "#f97316", "#f5b301", "#22a55b", "#0ea5a4", "#06b6d4", "#2f80ed", "#4285d4", "#7c5cd6", "#a855f7", "#e0457b", "#ec4899", "#c48663", "#64748b"];
 let fieldSerial = 0;
@@ -938,10 +1103,15 @@ function closeDetail() {
   pinsDirty = true;
   const box = $("#detail");
   if (box) {
+    if (!box.hidden) fadeAway(box, { transform: innerWidth <= 760 ? "translateY(12px)" : "translateX(14px)" });
     box.hidden = true;
     box.innerHTML = "";
   }
   if ($("#map-stage")) draw();
+}
+function revealDetail(box, wasHidden) {
+  if (wasHidden) animate(box, [{ opacity: 0, transform: innerWidth <= 760 ? "translateY(20px)" : "translateX(22px)" }, { opacity: 1, transform: "none" }], MOTION.panel);
+  else animate(box, [{ opacity: 0.55 }, { opacity: 1 }], MOTION.fast);
 }
 let detailSerial = 0;
 async function openDetail(id, { center = false } = {}) {
@@ -966,15 +1136,12 @@ async function openDetail(id, { center = false } = {}) {
     </dl>
     <div class="detail-actions"><button class="ae-btn" data-act="edit-place">${icon("edit")}<span>Edit</span></button>${hasLocation(p) ? `<button class="ae-btn" data-act="show-on-map">${icon("map")}<span>Show on map</span></button>` : ""}<button class="ae-btn ae-btn--quiet is-danger" data-act="trash-place">${icon("trash")}<span>Move to Trash</span></button></div>
     <div id="linked-from" data-place="${esc(p.id)}" hidden></div>`;
+  revealDetail(box, box.hidden);
   box.hidden = false;
   $(".detail-title", box).focus({ preventScroll: true });
   if ($("#map-stage")) {
-    if (center && hasLocation(p)) {
-      map.cx = lngX(p.longitude);
-      map.cy = latY(p.latitude);
-      map.z = Math.max(map.z, 12);
-    }
-    draw();
+    if (center && hasLocation(p)) flyTo({ cx: lngX(p.longitude), cy: latY(p.latitude), z: Math.max(map.z, 12) });
+    else draw();
   }
   loadLinkedFrom(p.id);
 }
@@ -991,12 +1158,8 @@ function openContactDetail(key, { center = false } = {}) {
   $(".detail-title", box)?.focus({ preventScroll: true });
   if ($("#map-stage")) {
     const first = state.contacts.items.find((c) => c.group === key);
-    if (center && first) {
-      map.cx = lngX(first.longitude);
-      map.cy = latY(first.latitude);
-      map.z = Math.max(map.z, 13);
-    }
-    draw();
+    if (center && first) flyTo({ cx: lngX(first.longitude), cy: latY(first.latitude), z: Math.max(map.z, 13) });
+    else draw();
   }
 }
 function refreshContactDetail() {
@@ -1017,6 +1180,7 @@ function refreshContactDetail() {
   box.innerHTML = `<div class="detail-head">${markerSvg(one ? members[0].marker : MERIDIAN_MARKER, 30)}<h2 class="detail-title" tabindex="-1">${one ? esc(members[0].name) : `${members.length} contacts here`}</h2><button class="map-tool" data-act="close-detail" aria-label="Close details">${icon("x")}</button></div>
     <p class="source-note">${icon("lock")}<span>From Meridian. Atlas only shows it, and only its marker can be changed here.</span></p>
     <div class="contact-list">${members.map(card).join("")}</div>`;
+  if (box.hidden) revealDetail(box, true);
   box.hidden = false;
 }
 function openContactMarker(c) {
@@ -1293,11 +1457,7 @@ document.addEventListener("click", async (event) => {
       showResults();
       $("#map-q").value = "";
       if (el.dataset.result === "local") return await openPlace(item.id, { center: true });
-      map.cx = lngX(item.longitude);
-      map.cy = latY(item.latitude);
-      map.z = Math.max(map.z, 15);
-      clampView();
-      draw();
+      flyTo({ cx: lngX(item.longitude), cy: latY(item.latitude), z: Math.max(map.z, 15) });
       return openEditor({ name: item.name, address: item.display, latitude: item.latitude, longitude: item.longitude, external_ref: item.external_ref });
     }
     if (el.dataset.filter) {
@@ -1325,9 +1485,20 @@ document.addEventListener("click", async (event) => {
     }
     if (act === "new-category") return openCategoryDialog(null, () => go("categories"));
     if (act === "contacts-panel") return openContactsPanel();
+    if (act === "source-library") {
+      Object.assign(state.filter, { source: "contacts", category: "", view: "all", q: "" });
+      return await go("library");
+    }
     if (act === "toggle-layers") {
       state.layersOpen = !state.layersOpen;
-      return renderLayers();
+      const body = $(".layers-body");
+      if (body) {
+        body.hidden = !state.layersOpen;
+        el.setAttribute("aria-expanded", String(state.layersOpen));
+        $(".chev", el)?.classList.toggle("is-open", state.layersOpen);
+        if (state.layersOpen) animate(body, [{ opacity: 0, transform: "translateY(-4px)" }, { opacity: 1, transform: "none" }], MOTION.fast);
+      }
+      return;
     }
     if (act === "osm-copyright") return await bridge("external", { url: "https://www.openstreetmap.org/copyright" });
     if (act === "map-online") {
@@ -1363,8 +1534,7 @@ document.addEventListener("click", async (event) => {
     if (act === "close-editor") return $("#dialog").close();
     if (act === "save-place") return await saveEditor(el);
     if (act === "zoom-in" || act === "zoom-out") {
-      const [w, h] = viewSize();
-      return zoomAt(w / 2, h / 2, act === "zoom-in" ? 0.8 : -0.8);
+      return flyTo({ cx: map.cx, cy: map.cy, z: Math.max(minZoom(), Math.min(19, flightZoom() + (act === "zoom-in" ? 0.8 : -0.8))) }, 180);
     }
     if (act === "fit") return fitPlaces();
     if (act === "cancel-pick") {

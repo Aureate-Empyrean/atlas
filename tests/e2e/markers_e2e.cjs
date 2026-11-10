@@ -346,7 +346,7 @@ async function desktop(browser, state) {
   // Categories page and safe delete.
   await pane.locator('[data-go="categories"]').first().click();
   await pane.locator(`[data-category-card="${spa.category_id}"]`).waitFor();
-  check((await pane.locator(`[data-category-card="${state.id.Meridian}"]`).innerText()).includes("Managed by Atlas"), "Meridian is shown as system-managed");
+  check((await pane.locator(`[data-category-card="${state.id.Meridian}"]`).innerText()).includes("Owned by Meridian"), "Meridian is shown as a source that Meridian owns");
   check((await pane.locator(`[data-category-card="${state.id.Meridian}"] [data-cat-delete]`).count()) === 0, "Meridian cannot be deleted");
   await page.screenshot({ path: path.join(SHOTS, "categories-1440.png") });
   await pane.locator(`[data-cat-edit="${spa.category_id}"]`).click();
@@ -454,6 +454,9 @@ async function cleanup(page, state) {
   for (const p of places) {
     await call(a, `/places/${p.id}`, "DELETE");
     await call(a, `/trash/${p.id}`, "DELETE");
+  }
+  for (const c of (await call(a, "/categories")).items.filter((x) => !x.system && x.name.endsWith(` ${RUN}`))) {
+    await call(a, `/categories/${c.id}`, "DELETE").catch(() => {});
   }
   const layer = await call(a, "/contacts");
   for (const x of layer.items.filter((i) => i.name.includes(RUN))) {

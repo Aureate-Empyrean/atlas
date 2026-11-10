@@ -831,6 +831,10 @@ body {
   gap: 4px;
 }
 .segment {
+  transition:
+    background-color var(--m-hover-time) var(--m-ease),
+    border-color var(--m-hover-time) var(--m-ease),
+    color var(--m-hover-time) var(--m-ease);
   min-height: 36px;
   padding: 0 12px;
   border: 1px solid var(--m-line);
@@ -848,18 +852,19 @@ body {
 }
 .place-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr));
+  gap: 12px;
 }
 .place-list .empty {
   grid-column: 1 / -1;
 }
 .place-card {
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
   width: 100%;
-  padding: 13px 14px;
+  padding: 14px 16px;
   border: 1px solid var(--m-line);
   border-radius: 14px;
   background: var(--m-raised);
@@ -871,12 +876,16 @@ body {
 .place-card:hover {
   background: var(--m-raised-hover);
 }
+button.place-card:hover {
+  transform: translateY(-1px);
+}
+button.place-card:active {
+  transform: translateY(0) scale(0.995);
+}
 .place-card:focus-visible {
   outline: 2px solid var(--focus);
 }
 .place-card.is-static {
-  flex-wrap: wrap;
-  align-items: center;
   cursor: default;
 }
 .place-form {
@@ -1277,16 +1286,6 @@ body {
   display: grid;
   gap: 6px;
 }
-.category-card .primary .tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-}
-.category-card .tag .i {
-  width: 12px;
-  height: 12px;
-}
-
 /* Meridian contact markers */
 .source-note {
   display: flex;
@@ -1405,9 +1404,6 @@ body {
   .lib-combo {
     flex: 1 1 100%;
   }
-  .category-card {
-    flex-wrap: wrap;
-  }
 }
 
 /* Navigation: drafts kept while moving through history or leaving this module. */
@@ -1435,18 +1431,323 @@ body {
 }
 
 /* Library: places and Meridian addresses together. */
-.contact-entry .detail-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-}
-.source-tag {
-  vertical-align: middle;
-}
 .library-note {
   margin: 0 0 10px;
 }
 .lib-sort .ae-select {
   width: auto;
+}
+
+/* Library cards: one structure for every entry. The header never wraps around its badge. */
+.card-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.card-title {
+  display: -webkit-box;
+  overflow: hidden;
+  font-weight: var(--weight-semibold);
+  line-height: 1.3;
+  overflow-wrap: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.card-address {
+  color: var(--m-text-2);
+  font-size: var(--m-fs-meta);
+  line-height: 1.4;
+  overflow-wrap: break-word;
+  white-space: pre-line;
+}
+.card-facts {
+  color: var(--m-text-3);
+  font-size: var(--m-fs-small);
+}
+.card-geo {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--m-text-3);
+  font-size: var(--m-fs-small);
+}
+.card-geo::before {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+  flex: none;
+}
+.card-geo.is-located {
+  color: var(--m-accent-text);
+}
+.card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 4px;
+}
+.source-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--m-text-3);
+  font-size: 12px;
+  font-weight: var(--weight-medium, 500);
+  white-space: nowrap;
+}
+.source-chip .i {
+  width: 12px;
+  height: 12px;
+}
+
+/* Categories: fewer, wider cards. A name wraps between words, never inside an ordinary one. */
+.category-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+  gap: 12px;
+}
+.category-grid .empty {
+  grid-column: 1 / -1;
+}
+.category-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--m-line);
+  border-radius: 14px;
+  background: var(--m-raised);
+  transition:
+    background-color var(--m-hover-time) var(--m-ease),
+    border-color var(--m-hover-time) var(--m-ease),
+    transform var(--m-fast) var(--m-ease);
+}
+.category-card:hover,
+.category-card:focus-within {
+  border-color: var(--m-line-strong);
+  background: var(--m-raised-hover);
+}
+.category-card:hover {
+  transform: translateY(-1px);
+}
+.cat-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.cat-head .pin-svg {
+  flex: none;
+}
+.cat-title {
+  min-width: 0;
+}
+.cat-title h3 {
+  margin: 0;
+  font-size: var(--m-fs-section);
+  font-weight: var(--weight-semibold);
+  line-height: 1.3;
+  overflow-wrap: break-word;
+}
+.cat-title p {
+  margin: 1px 0 0;
+  color: var(--m-text-3);
+  font-size: var(--m-fs-small);
+}
+.cat-desc {
+  margin: 0;
+  color: var(--m-text-2);
+  font-size: var(--m-fs-meta);
+  overflow-wrap: break-word;
+}
+.cat-desc.is-empty {
+  color: var(--m-text-3);
+}
+.cat-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 2px;
+}
+
+/* A connected source is not a category: it has no edit or delete, and says who owns it. */
+.source-section {
+  margin-top: 32px;
+  padding-top: 24px;
+  box-shadow: 0 -1px 0 var(--m-line);
+}
+.source-section h2 {
+  margin: 0;
+  font-size: var(--m-fs-section);
+  font-weight: var(--weight-semibold);
+}
+.source-section > .meta {
+  margin: 4px 0 12px;
+}
+.source-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 14px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--m-well) 70%, transparent);
+  box-shadow: inset 0 0 0 1px var(--m-line);
+}
+.source-text {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.source-text h3 {
+  margin: 0;
+  font-size: var(--m-fs-meta);
+  font-weight: var(--weight-semibold);
+}
+.source-text p {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin: 2px 0 0;
+  color: var(--m-text-3);
+  font-size: var(--m-fs-small);
+}
+.source-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Motion. Meridian's curves; transform and opacity only. Dialogs use CSS transitions, so closing
+   one is immediate for the program and can be interrupted at any point. */
+.nav-item {
+  transition:
+    background-color var(--m-hover-time) var(--m-ease),
+    color var(--m-hover-time) var(--m-ease),
+    box-shadow var(--m-hover-time) var(--m-ease);
+}
+.place-card,
+.map-tool,
+.layer,
+.state-chip,
+.map-result,
+.combo-option {
+  transition:
+    background-color var(--m-hover-time) var(--m-ease),
+    border-color var(--m-hover-time) var(--m-ease),
+    transform var(--m-fast) var(--m-ease);
+}
+.ae-dialog {
+  /* The browser's centering applies only while modal; without this a closing dialog would jump. */
+  position: fixed;
+  inset: 0;
+  flex-direction: column; /* otherwise its contents would reflow while it fades */
+  height: fit-content;
+  margin: auto;
+  opacity: 0;
+  transform: translateY(6px) scale(0.99);
+  transition:
+    opacity var(--m-fast) var(--m-ease-exit),
+    transform var(--m-fast) var(--m-ease-exit),
+    overlay var(--m-fast) allow-discrete,
+    display var(--m-fast) allow-discrete;
+}
+.ae-dialog[open] {
+  opacity: 1;
+  transform: none;
+  animation: none;
+  transition:
+    opacity var(--m-page) var(--m-ease),
+    transform var(--m-page) var(--m-ease),
+    overlay var(--m-page) allow-discrete,
+    display var(--m-page) allow-discrete;
+}
+@starting-style {
+  .ae-dialog[open] {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+}
+.ae-dialog::backdrop {
+  opacity: 0;
+  animation: none;
+  transition:
+    opacity var(--m-fast) linear,
+    overlay var(--m-fast) allow-discrete,
+    display var(--m-fast) allow-discrete;
+}
+.ae-dialog[open]::backdrop {
+  opacity: 1;
+  transition-duration: var(--m-page);
+}
+@starting-style {
+  .ae-dialog[open]::backdrop {
+    opacity: 0;
+  }
+}
+.combo-panel:not([hidden]),
+.map-picking {
+  animation: at-rise var(--m-fast) var(--m-ease);
+}
+.map-picking {
+  animation-duration: var(--m-page);
+}
+.pin.is-new .pin-svg {
+  animation: at-pin var(--m-page) var(--m-ease);
+}
+@keyframes at-rise {
+  from {
+    opacity: 0;
+    translate: 0 -4px;
+  }
+}
+@keyframes at-pin {
+  from {
+    opacity: 0;
+    translate: 0 -8px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+@media (max-width: 760px) {
+  .card-actions .ae-btn,
+  .cat-actions .ae-btn,
+  .source-actions .ae-btn {
+    min-height: 40px;
+  }
+  .place-list,
+  .category-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* A long category name must not widen the Layers panel. */
+.layers-body,
+.layer {
+  min-width: 0;
+}
+.layer .grow {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

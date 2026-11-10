@@ -7,7 +7,7 @@ the rest of your Empyrean data. Architecture: [`architecture/modules/atlas.md`](
 
 | | |
 | --- | --- |
-| Module ID, version | `atlas`, 0.5.0 (schema 3) on aetest; 0.3.0 in production |
+| Module ID, version | `atlas`, 0.6.0 (schema 3) in source; 0.5.0 on aetest until updated; 0.3.0 in production |
 | Port | 19333 |
 | Nexus range | `>=0.1.8,<0.2.0` |
 | Capabilities | `ui.application`, `storage.data`, `references.read`, `references.resolve`, `projections.read` (only Meridian's `contact-addresses`), `network.egress` (optional, off until the owner turns the online map on) |
@@ -37,6 +37,10 @@ and is kept as a draft when Atlas is left. See `../empyrean-nexus/docs/navigatio
 ## Meridian addresses in the Library (0.5.0 on aetest)
 
 The Library lists Meridian's addresses alongside Places, with a source filter, search that ignores case and accents, **Open in Meridian** at the exact address, **Show on map** or **Locate**, and **Make a place**. They are read live under the same access boundary as Meridian. Atlas still stores no names or address text, nothing is shown during an outage, and a contact removed in Meridian leaves at once. Atlas also answers Meridian's address searches through Photon. See [ADR 0031](../architecture/decisions/0031-address-suggestions-through-atlas.md).
+
+## Layout and motion (0.6.0, not in production)
+
+Library cards share one structure: name and source, address, actions. Categories are wider cards, and Meridian appears separately under Connected sources, because Meridian owns those addresses. The map's empty state counts Meridian's markers and respects layers and filters. Motion uses Meridian's durations and curves on transform and opacity only, respects `prefers-reduced-motion`, and leaves wheel, drag and pinch on the map direct. Browser journey: `tests/e2e/ui_motion_e2e.cjs`, for a disposable installation.
 
 ## Limits
 

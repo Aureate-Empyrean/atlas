@@ -25,6 +25,7 @@ const check = (ok, what) => {
   console.log(`ok   ${what}`);
 };
 
+let removeThisRun = async () => {};
 (async () => {
   fs.mkdirSync(SHOTS, { recursive: true });
   const browser = await chromium.launch();
@@ -61,6 +62,13 @@ const check = (ok, what) => {
     if (!f) await sleep(250);
   }
   await f.waitForSelector("#map-stage", { timeout: 30000 });
+  // A run that stops part-way must not leave its places behind.
+  removeThisRun = async () => {
+    for (const x of (await api(`/places?q=${encodeURIComponent(RUN)}`)).items) {
+      await api(`/places/${x.id}`, "DELETE");
+      await api(`/trash/${x.id}`, "DELETE");
+    }
+  };
   const api = (p, m = "GET", b) => f.evaluate(([x, y, z]) => (z === null ? api(x, y) : api(x, y, z)), [p, m, b === undefined ? null : b]);
   const brand = await f.evaluate(() => ({ ok: document.querySelector(".brand-mark img")?.naturalWidth > 0, accent: getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() }));
   check(brand.ok && brand.accent.toLowerCase() === "#4285d4", `the header shows the icon, accent ${brand.accent}`);
@@ -149,7 +157,8 @@ const check = (ok, what) => {
   check(errors.length === 0, `no page errors (${errors.join(" / ")})`);
   await browser.close();
   console.log(`${passed} checks passed`);
-})().catch((error) => {
+})().catch(async (error) => {
   console.error(error);
+  await removeThisRun().catch(() => {});
   process.exit(1);
 });

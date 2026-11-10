@@ -55,10 +55,19 @@ const edges = (source) => JSON.parse(execFileSync("docker", ["exec", "aetest-nex
 c=sqlite3.connect('file:/data/nexus.sqlite3?mode=ro',uri=True)
 print(json.dumps(c.execute("select target,readers from resource_references where source=?",(sys.argv[1],)).fetchall()))`, source], { encoding: "utf8" }));
 
+let removeThisRun = async () => {};
 (async () => {
   fs.mkdirSync(SHOTS, { recursive: true });
   const browser = await chromium.launch();
   const page = await browser.newPage({ reducedMotion: "reduce", viewport: { width: 1440, height: 900 } });
+  // A run that stops part-way must not leave its places behind.
+  removeThisRun = async () => {
+    const a = await open(page, "atlas");
+    for (const p of (await call(a, "/places?q=" + encodeURIComponent(RUN))).items) {
+      await call(a, `/places/${p.id}`, "DELETE");
+      await call(a, `/trash/${p.id}`, "DELETE");
+    }
+  };
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
   const pane = page.frameLocator("#module-application");
@@ -166,7 +175,8 @@ print(json.dumps(c.execute("select target,readers from resource_references where
   check(errors.length === 0, `no page errors (${errors.join(" / ")})`);
   await browser.close();
   console.log(`${passed} checks passed`);
-})().catch((error) => {
+})().catch(async (error) => {
   console.error(String(error).slice(0, 1500));
+  await removeThisRun().catch(() => {});
   process.exit(1);
 });
